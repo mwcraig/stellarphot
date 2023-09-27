@@ -1,3 +1,4 @@
+from astropy.table import Table, join
 import numpy as np
 
 
@@ -41,10 +42,6 @@ def broeg_weights(photometry, filter=None, max_iterations=100, convergence_thres
     # instrumental magnitudes, we use the instrumental magnitude errors directly,
     # as Broeg suggests in the paper.
 
-    # Get number of stars in the photometry table
-    star_ids = set(photometry['star_id'])
-    n_stars = len(star_ids)
-
     # What filters are present in the data?
     filters = set(photometry['filter'])
 
@@ -60,30 +57,64 @@ def broeg_weights(photometry, filter=None, max_iterations=100, convergence_thres
         else:
             raise ValueError('More than one filter present in photometry table. You must specify a filter.')
 
+    use_phot = photometry[photometry['filter'] == filter]
+
+    # Get number of stars in the photometry table. Do this after selecting the desired filter
+    # in case there are observations in filters other than the one the user wants to use.
+    star_ids = sorted(set(use_phot['star_id']))
+    n_stars = len(star_ids)
+
     if n_stars < 3:
         raise ValueError('Photometry table must contain at least three stars')
 
-    use_phot = photometry[photometry['filter'] == filter]
+    # Estimate the initial error by aggregating the error for each star over all
+    # of the measurements of the error.
+    use_phot_grouped = use_phot.group_by('star_id')
+
+    avg_phot_grouped = use_phot_grouped.groups.aggregate(np.nanmean)
+
+    # import pdb; pdb.set_trace()
+
     # Calculate the initial Broeg weights from the instrumental errors
-    weights = 1.0 / use_phot['mag_error']**2
+    weights = 1.0 / avg_phot_grouped['mag_error']**2
 
     # Weights need to be normalized
     weights /= np.sum(weights)
 
+    weights_list = [weights]
+    light_curves = []
+
     # This will be slow, but easy to implement for now
+    for i in range(max_iterations):
+        weights = np.zeros_like(weights)
+        for idx, a_star in enumerate(star_ids):
+            # Calculate the weighted mean magnitude of the comparison stars, excluding
+            # the current star
+            weight_table = Table([star_ids, weights_list[-1]], names=['star_id', 'weight'])
+            comp_mag = calc_comp_mag(use_phot, weight_table, exclude_star_id=a_star)
+
+            this_star = use_phot['star_id'] == a_star
+            # Calculate the difference between the two
+            delta_mag = use_phot[this_star]['mag_inst'] - comp_mag
+
+            # Calculate the new weight for the current star
+            if np.isnan(delta_mag).all() or np.nanstd(delta_mag) == 0:
+                print(f"Setting weight to 0 for star {a_star}")
+                weights[idx] = 0.0
+            else:
+                weights[idx] = 1.0 / np.nanstd(delta_mag)**2
+        weights_list.append(weights / np.sum(weights))
+    return star_ids, weights_list
 
 
-    return weights
-
-
-def calc_comp_mag(mags, weights, exclude_star_id=None):
+def calc_comp_mag(photometry, weights_table, exclude_star_id=None):
     """
     Calculate the weighted mean magnitude of the comparison stars.
 
     Parameters
     ----------
 
-    mags : array-like
+    photometry : `astropy.table.Table`
         The instrumental magnitudes of the comparison stars.
 
     weights : array-like
@@ -99,11 +130,16 @@ def calc_comp_mag(mags, weights, exclude_star_id=None):
     """
     # If a star is to be excluded, set its weight to zero
     if exclude_star_id is not None:
-        weights = weights.copy()
+        weights_table = weights_table.copy()
         # Set the weight of the excluded star to zero...
-        weights[exclude_star_id] = 0.0
+        excluded_star_index = weights_table['star_id'] == exclude_star_id
+        weights_table['weight'][excluded_star_index] = 0.0
         # ...and renormalize the weights
-        weights /= np.sum(weights)
+        weights_table['weight'] /= np.sum(weights_table['weight'])
 
+    joined = join(photometry, weights_table, keys='star_id', join_type='left')
+    joined['weighted_mag'] = joined['mag_inst'] * joined['weight']
+    joined = joined['BJD', 'weighted_mag']
+    agged = joined.group_by('BJD').groups.aggregate(np.nansum)
     # Calculate the weighted mean magnitude
-    return np.sum(mags * weights)
+    return agged['weighted_mag']
