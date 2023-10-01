@@ -143,3 +143,64 @@ def calc_comp_mag(photometry, weights_table, exclude_star_id=None):
     agged = joined.group_by('BJD').groups.aggregate(np.nansum)
     # Calculate the weighted mean magnitude
     return agged['weighted_mag']
+
+
+def broeg_weights2(mags, errors, max_iterations=10, convergence_threshold=0.0001):
+    """
+    Calculate the Broeg weights for a given set of instrumental magnitudes and errors.
+
+    Parameters
+    ----------
+
+    mags : array-like
+        The instrumental magnitudes.
+
+    errors : array-like
+        The instrumental magnitude errors.
+
+    Returns
+    -------
+    array-like
+        The Broeg weights.
+
+    Notes
+    -----
+
+    This implementation of the algorithm described in C. Broeg's
+    algorithm ('A new algorithm for differential photometry:
+    computing an optimum artificial comparison
+    star', 2005, http://adsabs.harvard.edu/abs/2005AN....326..134B) is based
+    heavily on the LEMON package at
+    """
+    weight_vec = 1.0 / (errors.mean(axis=1)**2)
+    n_stars = mags.shape[0]
+
+    weight_vecs = [weight_vec / weight_vec.sum()]
+    light_curves = []
+    for i in range(max_iterations):
+        if i > 2:
+            # Check for convergence
+            if np.abs(weight_vecs[-1] - weight_vecs[-2]).max() < convergence_threshold:
+                weight_vecs = weight_vecs[:-1]
+                break
+
+        weights = np.array(
+            [
+                weight_vec for _ in range(n_stars)
+            ]
+        )
+        weights[np.diag_indices(n_stars)] = 0.0
+        weights_norm_factor = 1 / weights.sum(axis=1)
+        weights_norm_matrix = np.zeros([n_stars, n_stars])
+        weights_norm_matrix[np.diag_indices(n_stars)] = weights_norm_factor
+        comp_mags = weights_norm_matrix @ weights @ mags
+        delta_mags = mags - comp_mags
+        light_curves.append(delta_mags)
+        # print(f"Iteration {i}: {weight_vec}")
+        # print(f"\tNormalized weights: {weights_norm_matrix @ weights}")
+        # print(f"Delta mags: {delta_mags}")
+
+        weight_vec = 1 / delta_mags.std(axis=1)**2
+        weight_vecs.append(weight_vec / weight_vec.sum())
+
+    return weight_vecs, light_curves
