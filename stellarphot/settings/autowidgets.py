@@ -1,7 +1,7 @@
 # Some classes for ipyautoui that really belong there, not here
 
 import ipywidgets as w
-from ipyautoui.autowidgets import create_widget_caller
+from ipyautoui.automapschema import create_widget_caller
 
 __all__ = ["CustomBoundedIntTex"]
 

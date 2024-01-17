@@ -19,13 +19,13 @@ dependencies = [
     "bottleneck",
     "ccdproc",
     "ginga",
-    "ipyautoui >=0.5.9",
+    "ipyautoui >=0.7",
     "ipyfilechooser",
     "ipywidgets",
     "matplotlib",
     "pandas",
     "photutils >=1.9",
-    "pydantic<2",
+    "pydantic >=2",
     "pyyaml",
 ]
 
