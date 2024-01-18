@@ -21,6 +21,7 @@ MODEL_DEFAULT_CONFIGURATION = ConfigDict(
     validate_assignment=True,
     # Make sure there are no extra fields
     extra="forbid",
+    arbitrary_types_allowed=True,
 )
 
 

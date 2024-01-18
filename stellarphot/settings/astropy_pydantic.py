@@ -1,7 +1,7 @@
 from typing import Annotated
 
 from astropy.units import IrreducibleUnit, Quantity, Unit
-from pydantic import BeforeValidator, PlainSerializer, PlainValidator, WithJsonSchema
+from pydantic import PlainSerializer, PlainValidator, WithJsonSchema
 from typing_extensions import TypeAliasType
 
 __all__ = ["UnitType", "QuantityType", "PixelScaleType"]
@@ -19,7 +19,7 @@ def _quantity_unit_serialization(v):
 
 
 # MAKE A CLOSURE HERE TO HANDLE QUANTITY OR UNIT
-def _quantity_unit_type_validator(value, handler, info):
+def _quantity_unit_type_validator(value, info):
     """
     Validate a Quantity or Unit.
 
@@ -32,7 +32,7 @@ def _quantity_unit_type_validator(value, handler, info):
     """
     print(f"{info=}")
     print(f"{value=}")
-    print(f"{handler=}")
+
     # It is import to TRY QUANTITY FIRST because an expression like "3 meter" will
     # be parsed as a CompositeUnit with value "3 m". f you try to parse "meter" as a
     # Quantity a Type Error will be raised.
@@ -55,7 +55,7 @@ def _quantity_unit_type_validator(value, handler, info):
             "no units are desired."
         )
 
-    return handler(return_val)
+    return return_val
 
 
 def _pixel_scale_unit_checker(value):
@@ -80,15 +80,16 @@ UnitType = TypeAliasType(
         # Must use PlainValidator below to completely replace pydantic validation,
         # because pydantic has no idea how to validate a Unit, and the other validators
         # invoke the pydantic validation at some point.
-        BeforeValidator(_quantity_unit_type_validator),
+        PlainValidator(_quantity_unit_type_validator),
+        # Serialize to a string when dumping to JSON
+        PlainSerializer(_quantity_unit_serialization, when_used="json"),
         # You need some kind of schema for pydantic to process this annotation -- in
         # particular, it needs to know the type of the field as it is encoded in JSON.
         # TODO: Look at what WithJsonSchema does to see if we can get field_name
         # TODO: Look at whether a BeforeValidator might work to get a title JSON schema
+        #       NO DOES NOT WORK
         # TODO: Look at documentation about customizing the schema
         WithJsonSchema({"type": "string"}),
-        # Serialize to a string when dumping to JSON
-        PlainSerializer(_quantity_unit_serialization, when_used="json"),
     ],
 )
 
