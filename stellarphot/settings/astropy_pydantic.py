@@ -1,7 +1,7 @@
 from typing import Annotated
 
 from astropy.units import IrreducibleUnit, Quantity, Unit
-from pydantic import PlainSerializer, PlainValidator, WithJsonSchema
+from pydantic import BeforeValidator, PlainSerializer, PlainValidator, WithJsonSchema
 from typing_extensions import TypeAliasType
 
 __all__ = ["UnitType", "QuantityType", "PixelScaleType"]
@@ -11,133 +11,106 @@ __all__ = ["UnitType", "QuantityType", "PixelScaleType"]
 # https://docs.gammapy.org/dev/_modules/gammapy/analysis/config.html
 
 
-def ser(v):
+def _quantity_unit_serialization(v):
+    """
+    Serialize a Quantity or Unit to a string.
+    """
     return str(v)
 
 
-def schema_thing(value, handler, **kwd):
-    # print(f"type(value)={type(value)}")
+# MAKE A CLOSURE HERE TO HANDLE QUANTITY OR UNIT
+def _quantity_unit_type_validator(value, handler, info):
+    """
+    Validate a Quantity or Unit.
+
+    Parameters
+    ----------
+    value : str
+        The value to validate.
+    info : `pydantic.FieldInfo`
+        Information about the field being validated.
+    """
+    print(f"{info=}")
     print(f"{value=}")
     print(f"{handler=}")
-    print(f"{kwd=}")
-    # print(f"{value=}")
-    # print(dir(handler))
-    # reals = [h for h in dir(handler) if not h.startswith("_")]
-    # for real in reals:
-    #     print(f"{real=}")
-    #     print([h for h in dir(getattr(handler, real)) if not h.startswith("_")])
-    return {"type": "string"}
+    # It is import to TRY QUANTITY FIRST because an expression like "3 meter" will
+    # be parsed as a CompositeUnit with value "3 m". f you try to parse "meter" as a
+    # Quantity a Type Error will be raised.
+    try:
+        return_val = Quantity(value)
+    except TypeError:
+        try:
+            # Oh foo. An empty string is a valid Unit. Bork that!
+            if value == "":
+                raise ValueError("Empty string is not a valid unit")
+            return_val = Unit(value)
+        except TypeError as erru:
+            raise ValueError(
+                f"Unable to interpret {value} as an astropy Qunatity or Unit"
+            ) from erru
+
+    if isinstance(return_val, Quantity) and not return_val.unit.bases:
+        raise ValueError(
+            "A unit is required. Use the unit 'dimensionless_unscaled' if "
+            "no units are desired."
+        )
+
+    return handler(return_val)
+
+
+def _pixel_scale_unit_checker(value):
+    """
+    Check that the unit is an angle per pixel.
+    """
+    if (
+        len(value.unit.bases) != 2
+        or value.unit.bases[0].physical_type != "angle"
+        or value.unit.bases[1].name != "pix"
+    ):
+        raise ValueError(f"Invalid unit for pixel scale: {value.unit!r}")
+    return value
 
 
 UnitType = TypeAliasType(
     "UnitType",
     Annotated[
+        # Some units, like meter, are reducible, and can be expressed in terms of
+        # other units. Some units cannot be reduced. We need to accommodate both.
         Unit | IrreducibleUnit,
         # Must use PlainValidator below to completely replace pydantic validation,
         # because pydantic has no idea how to validate a Unit, and the other validators
         # invoke the pydantic validation at some point.
-        PlainValidator(lambda v: Unit(v)),
-        # GetPydanticSchema(get_pydantic_json_schema=schema_thing),
-        # # You need some kind of schema for pydantic to process this annotation
-        WithJsonSchema({"type": "string", "examples": ["m", "m / s"]}),
+        BeforeValidator(_quantity_unit_type_validator),
+        # You need some kind of schema for pydantic to process this annotation -- in
+        # particular, it needs to know the type of the field as it is encoded in JSON.
+        # TODO: Look at what WithJsonSchema does to see if we can get field_name
+        # TODO: Look at whether a BeforeValidator might work to get a title JSON schema
+        # TODO: Look at documentation about customizing the schema
+        WithJsonSchema({"type": "string"}),
         # Serialize to a string when dumping to JSON
-        PlainSerializer(ser, when_used="json"),
+        PlainSerializer(_quantity_unit_serialization, when_used="json"),
     ],
 )
-# class UnitType(Unit):
-#     # Validator for Unit type
-#     @classmethod
-#     def __get_validators__(cls):
-#         yield cls.validate
-
-#     @classmethod
-#     def validate(cls, v):
-#         return Unit(v)
-
-#     @classmethod
-#     def __modify_schema__(cls, field_schema, field):
-#         # Set default values for the schema in case the field doesn't provide them
-#         name = "Unit"
-#         description = "An astropy unit"
-
-#         name = field.name or name
-#         description = field.field_info.description or description
-#         examples = field.field_info.extra.get("examples", [])
-
-#         field_schema.update(
-#             {
-#                 "title": name,
-#                 "description": description,
-#                 "examples": examples,
-#                 "type": "string",
-#             }
-#         )
 
 
-class QuantityType(Quantity):
-    # Validator for Quantity type
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, v):
-        try:
-            v = Quantity(v)
-        except TypeError as err:
-            raise ValueError(f"Invalid value for Quantity: {v}") from err
-        else:
-            if not v.unit.bases:
-                raise ValueError("Must provided a unit")
-        return v
-
-    # @classmethod
-    # def __modify_schema__(cls, field_schema, field):
-    #     # Set default values for the schema in case the field doesn't provide them
-    #     name = "Quantity"
-    #     description = "An astropy Quantity with units"
-
-    #     name = field.name or name
-    #     description = field.field_info.description or description
-    #     examples = field.field_info.extra.get("examples", [])
-
-    #     field_schema.update(
-    #         {
-    #             "title": name,
-    #             "description": description,
-    #             "examples": examples,
-    #             "type": "string",
-    #         }
-    #     )
+# See the UnitType above for a more detailed explanation of the choices below.
+QuantityType = TypeAliasType(
+    "QuantityType",
+    Annotated[
+        Quantity,
+        PlainValidator(_quantity_unit_type_validator),
+        WithJsonSchema({"type": "string"}),
+        PlainSerializer(_quantity_unit_serialization, when_used="json"),
+    ],
+)
 
 
-class PixelScaleType(Quantity):
-    # Validator for pixel scale type
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, v):
-        try:
-            v = Quantity(v)
-        except TypeError as err:
-            raise ValueError(f"Invalid value for Quantity: {v}") from err
-        if (
-            len(v.unit.bases) != 2
-            or v.unit.bases[0].physical_type != "angle"
-            or v.unit.bases[1].name != "pix"
-        ):
-            raise ValueError(f"Invalid unit for pixel scale: {v.unit!r}")
-        return v
-
-    # @classmethod
-    # def __modify_schema__(cls, field_schema):
-    #     field_schema.update(
-    #         {
-    #             "title": "PixelScale",
-    #             "description": "An astropy Quantity with units of angle per pixel",
-    #             "examples": ["0.563 arcsec / pix"],
-    #             "type": "string",
-    #         }
-    #     )
+PixelScaleType = TypeAliasType(
+    "PixelScaleType",
+    Annotated[
+        QuantityType,
+        PlainValidator(_quantity_unit_type_validator),
+        WithJsonSchema({"type": "string"}),
+        PlainSerializer(_quantity_unit_serialization, when_used="json"),
+    ],
+)
