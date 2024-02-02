@@ -3,11 +3,20 @@
 from pathlib import Path
 from typing import Annotated
 
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import EarthLocation, Latitude, Longitude, SkyCoord
 from astropy.io.misc.yaml import AstropyDumper, AstropyLoader
 from astropy.time import Time
 from astropy.units import Quantity, Unit
-from pydantic import BaseModel, ConfigDict, Field, confloat, conint, model_validator
+from astropy.utils import lazyproperty
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    confloat,
+    conint,
+    model_validator,
+)
 
 from .astropy_pydantic import (
     AstropyValidator,
@@ -15,6 +24,7 @@ from .astropy_pydantic import (
     QuantityType,
     UnitType,
     WithPhysicalType,
+    _UnitQuantTypePydanticAnnotation,
 )
 
 __all__ = ["Camera", "PhotometryApertures", "PhotometryFileSettings", "Exoplanet"]
@@ -28,6 +38,41 @@ MODEL_DEFAULT_CONFIGURATION = ConfigDict(
     # Make sure there are no extra fields
     extra="forbid",
 )
+
+
+def add_degree_to_float(value, _handler):
+    """
+    Translate a value that can be a number to a string with "degree" appended.
+    """
+    try:
+        as_number = float(value)
+    except ValueError:
+        return value
+    else:
+        return f"{as_number} degree"
+
+
+class Observatory(BaseModel):
+    name: str
+    latitude: Annotated[
+        Latitude, _UnitQuantTypePydanticAnnotation, BeforeValidator(add_degree_to_float)
+    ]
+    longitude: Annotated[
+        Longitude,
+        _UnitQuantTypePydanticAnnotation,
+        BeforeValidator(add_degree_to_float),
+    ]
+    elevation: Annotated[QuantityType, WithPhysicalType("length")]
+    AAVSO_code: str | None = None
+    TESS_telescope_code: str | None = None
+
+    model_config = MODEL_DEFAULT_CONFIGURATION
+
+    @lazyproperty
+    def earth_location(self):
+        return EarthLocation(
+            lat=self.latitude, lon=self.longitude, height=self.elevation
+        )
 
 
 class Camera(BaseModel):
