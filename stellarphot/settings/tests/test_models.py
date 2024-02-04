@@ -102,14 +102,39 @@ def test_camera_incompatible_max_val_units():
         )
 
 
-def test_camera_copy():
-    # Make sure copy actually copies everything
+@pytest.mark.parametrize(
+    "model,settings",
+    [
+        [Camera, TEST_CAMERA_VALUES],
+        [PhotometryApertures, DEFAULT_APERTURE_SETTINGS],
+        [Exoplanet, DEFAULT_EXOPLANET_SETTINGS],
+    ],
+)
+class TestModelAgnosticActions:
+    def test_model_copy(self, model, settings):
+        mod = model(**settings)
+        mod2 = mod.model_copy()
+        assert mod2 == mod
 
-    c = Camera(
-        **TEST_CAMERA_VALUES,
-    )
-    c2 = c.model_copy()
-    assert c2 == c
+    def tests_model_schema(self, model, settings):
+        mod = model(**settings)
+        schema = mod.model_json_schema()
+        assert len(schema["properties"]) == len(settings)
+
+    def test_model_json_tround_trip(self, model, settings):
+        mod = model(**settings)
+        mod2 = model.model_validate_json(mod.model_dump_json())
+        assert mod2 == mod
+
+    def test_model_table_round_trip(self, model, settings, tmp_path):
+        mod = model(**settings)
+        table = Table({"data": [1, 2, 3]})
+        table.meta["model"] = mod
+        table_path = tmp_path / "test_table.ecsv"
+        print(f"{mod=}")
+        table.write(table_path)
+        new_table = Table.read(table_path)
+        assert new_table.meta["model"] == mod
 
 
 def test_camera_altunitscheck():
@@ -128,36 +153,6 @@ def test_camera_altunitscheck():
         **camera_for_test,
     )
     assert c.model_dump() == camera_for_test
-
-
-def test_camera_schema():
-    # Check that we can generate a schema for a Camera and that it
-    # has the right number of attributes
-    c = Camera(**TEST_CAMERA_VALUES)
-    schema = c.model_json_schema()
-    assert len(schema["properties"]) == len(TEST_CAMERA_VALUES)
-
-
-def test_camera_json_round_trip():
-    # Check that a camera can be converted to json and back
-
-    c = Camera(**TEST_CAMERA_VALUES)
-
-    c2 = Camera.model_validate_json(c.model_dump_json())
-    assert c2 == c
-
-
-def test_camera_table_round_trip(tmp_path):
-    # Check that a camera can be stored as part of an astropy.table.Table
-    # metadata and retrieved
-    table = Table({"data": [1, 2, 3]})
-    c = Camera(**TEST_CAMERA_VALUES)
-    table.meta["camera"] = c
-    table_path = tmp_path / "test_table.ecsv"
-    table.write(table_path)
-    new_table = Table.read(table_path)
-
-    assert new_table.meta["camera"] == c
 
 
 def test_create_aperture_settings_correctly():
