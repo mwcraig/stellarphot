@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Annotated, Any
 
+from astropy.coordinates import Angle, Latitude, Longitude, SkyCoord
+from astropy.time import Time
 from astropy.units import (
     PhysicalType,
     Quantity,
@@ -385,7 +387,7 @@ def serialize_astropy_type(value):
     # has nested astropy objects in it. So for now, we just return the string
     # representation of the objects, like Angle (a type of Quantity), that are
     # entries in the dict representation of a SKyCoord.
-    if isinstance(value, UnitBase | Quantity):
+    if isinstance(value, UnitBase):  #  | Quantity):
         return str(value)
 
     try:
@@ -401,8 +403,17 @@ def serialize_astropy_type(value):
     # Recurse to handle nested astropy objects
     for k, v in rep.items():
         result[k] = serialize_astropy_type(v)
-
+    result["_astropy_type"] = value.__class__.__name__
     return result
+
+
+_ASTROPY_TYPE_MAPPING = {
+    "Time": Time,
+    "SkyCoord": SkyCoord,
+    "Angle": Angle,
+    "Latitude": Latitude,
+    "Longitude": Longitude,
+}
 
 
 class AstropyValidator:
@@ -438,7 +449,7 @@ class AstropyValidator:
         source_type,
         _handler,
     ):
-        def astropy_object_from_dict(value):
+        def astropy_object_from_dict(value, source_type=source_type):
             """
             This is NOT the right way to be doing this when there are nested
             definitions, e.g. in a SkyCoord where the RA and Dec are each
@@ -446,7 +457,52 @@ class AstropyValidator:
             has been short-circuited compared to what serialization to a Table would
             do to get this working and released.
             """
-            return source_type.info._construct_from_dict(value)
+            # print(f"{source_type=}, {value=}")
+            # astropy_type = value.pop("_astropy_type", None)
+            # try:
+            #     print("here")
+            #     return source_type.info._construct_from_dict(value)
+            # except ValidationError:
+            #     print("here2")
+            #     # This is a hack to get around the fact that the serialization
+            #     # of the astropy objects is not working for nested objects.
+            #     return value
+
+            result = {}
+            # astropy_type = (
+            #     None if not hasattr(value, "pop") else
+            #        value.pop("_astropy_type", None)
+            # )
+            # astropy_type = value.pop("_astropy_type", None)
+            for k, v in value.items():
+                astropy_subtype = (
+                    None if not hasattr(v, "pop") else v.pop("_astropy_type", None)
+                )
+                if astropy_subtype is not None:
+                    print("\tHAS SUBTYPE")
+                    result[k] = astropy_object_from_dict(v, astropy_subtype)
+                else:
+                    result[k] = v
+                # if hasattr(v, "info"):
+                #     print("\t\tHAS INFO")
+                #     try:
+                #         result[k] = source_type.info._construct_from_dict(v)
+                #     except ValidationError:
+                #         print("\t\t\tRECURSING")
+                #         result[k] = astropy_object_from_dict(v)
+                # else:
+                #     result[k] = v
+            try:
+                real_type = _ASTROPY_TYPE_MAPPING[source_type]
+            except KeyError:
+                real_type = source_type
+
+            try:
+                return real_type.info._construct_from_dict(result)
+            except AttributeError:
+                return result
+
+            # return source_type.info._construct_from_dict(value)
 
         from_dict_schema = core_schema.chain_schema(
             [
@@ -467,3 +523,17 @@ class AstropyValidator:
                 serialize_astropy_type
             ),
         )
+
+    # @classmethod
+    # def __get_pydantic_json_schema__(
+    #     cls, core_schema, handler
+    # ):
+    #     import pprint
+    #     pp = pprint.PrettyPrinter(indent=4)
+    #     pp.pprint(core_schema)
+    #     json_schema = handler(core_schema)
+    #     print(f"json_schema: {json_schema}")
+    #     json_schema = handler.resolve_ref_schema(json_schema)
+    #     print(f"json_schema: {json_schema}")
+    #     json_schema["type"] = cls.__name__
+    #     return json_schema

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Annotated
 
 from astropy.coordinates import EarthLocation, Latitude, Longitude, SkyCoord
-from astropy.io.misc.yaml import AstropyDumper, AstropyLoader
+from astropy.io.misc.yaml import AstropyDumper, AstropyLoader, dump
 from astropy.time import Time
 from astropy.units import Quantity, Unit
 from astropy.utils import lazyproperty
@@ -75,7 +75,38 @@ class Observatory(BaseModel):
         )
 
 
-class Camera(BaseModel):
+class BaseModelWithTableRep(BaseModel):
+    """
+    Mixin class to add YAML serialization to an Astropy table.
+    """
+
+    def __init__(self, *arg, **kwargs):
+        super().__init__(*arg, **kwargs)
+        self.generate_table_representers()
+
+    def generate_table_representers(self):
+        """
+        Call this method during initialization of a class to add the YAML
+        Table representation for the class.
+        """
+        return
+        class_string = f"!{self.__class__.__name__}"
+
+        # Add YAML round-tripping for Camera
+        def _representer(dumper, model):
+            # THIS SHOULD TAP INTO ASTROPY'S YAML DUMPER SOMEHOW
+            return dumper.represent_mapping(class_string, dump(model))
+
+        def _constructor(loader, node):
+            return self.__class__(**loader.construct_mapping(node))
+
+        AstropyDumper.add_representer(self.__class__, _representer)
+        AstropyLoader.add_constructor(class_string, _constructor)
+
+
+# Order matters here -- the init of AstroptTableRepresentation must be called after the
+# init of BaseModel
+class Camera(BaseModelWithTableRep):
     """
     A class to represent a CCD-based camera.
 
@@ -240,20 +271,7 @@ class Camera(BaseModel):
         return self
 
 
-# Add YAML round-tripping for Camera
-def _camera_representer(dumper, cam):
-    return dumper.represent_mapping("!Camera", cam.model_dump())
-
-
-def _camera_constructor(loader, node):
-    return Camera(**loader.construct_mapping(node))
-
-
-AstropyDumper.add_representer(Camera, _camera_representer)
-AstropyLoader.add_constructor("!Camera", _camera_constructor)
-
-
-class PhotometryApertures(BaseModel):
+class PhotometryApertures(BaseModelWithTableRep):
     """
     Settings for aperture photometry.
 
@@ -324,7 +342,7 @@ class PhotometryApertures(BaseModel):
         return self.inner_annulus + self.annulus_width
 
 
-class PhotometryFileSettings(BaseModel):
+class PhotometryFileSettings(BaseModelWithTableRep):
     """
     An evolutionary step on the way to having a monolithic set of photometry settings.
     """
@@ -342,7 +360,7 @@ class PhotometryFileSettings(BaseModel):
     )
 
 
-class Exoplanet(BaseModel):
+class Exoplanet(BaseModelWithTableRep):
     """
     Create an object representing an Exoplanet.
 
