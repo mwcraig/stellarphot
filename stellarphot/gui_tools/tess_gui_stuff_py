@@ -1,0 +1,144 @@
+
+    def save_tess_files(self, button=None):  # noqa: ARG002
+        """
+        Save the TESS files.
+
+        Parameters
+        ----------
+
+        button : `ipywidgets.Button`, optional
+            The button that was clicked.
+
+        Returns
+        -------
+
+        None
+            Button to save TESS file set to true (triggering action).
+        """
+        if self._field_name.value:
+            self.tess_field_view()
+            # Remove output file if it exists
+            if Path(self._field_name.value).exists() and self.overwrite_outputs:
+                Path(self._field_name.value).unlink()
+            try:
+                self.iw.save(self._field_name.value)
+            except OSError as err:
+                raise OSError(
+                    f"Existing file ({self._field_name.value}) can not be overwritten. "
+                    "Set overwrite_outputs=True to address this."
+                ) from err
+
+        if self._zoom_name.value:
+            self.tess_field_zoom_view()
+            # Remove output file if it exists
+            if Path(self._zoom_name.value).exists() and self.overwrite_outputs:
+                Path(self._zoom_name.value).unlink()
+            try:
+                self.iw.save(self._zoom_name.value)
+            except OSError as err:
+                raise OSError(
+                    f"Existing file ({self._zoom_name.value}) can not be overwritten. "
+                    "Set overwrite_outputs=True to address this."
+                ) from err
+
+def _make_tess_object_info(self):
+        """
+        Make the controls for the TESS mag and depth used to look up GAIA target list.
+        """
+        tess_object_info = ipw.HBox()
+        tess_mag = ipw.FloatText(description="TESS mag")
+        tess_depth = ipw.FloatText(description="Depth (ppt)")
+        tess_object_info.children = [tess_mag, tess_depth]
+        self._tess_object_info = tess_object_info
+        self._tess_object_info.mag = tess_mag
+        self._tess_object_info.depth = tess_depth
+        if self.tess_submission is None:
+            self._tess_object_info.layout.visibility = "hidden"
+
+    def _make_tess_save_box(self):
+        self.tess_save_toggle = ipw.ToggleButton(
+            description="TESS files...", disabled=True
+        )
+        self.tess_save_toggle.layout.visibility = "hidden"
+        self._tess_save_box = ipw.VBox()
+        self._tess_save_box.layout.visibility = "hidden"
+
+        tess_scope = self.observatory.TESS_telescope_code if self.observatory else None
+        tess_scope = "" if tess_scope is None else tess_scope
+        scope_name = ipw.Text(
+            description="Telescope code", value=tess_scope, style=DESC_STYLE
+        )
+
+        planet_num = ipw.IntText(description="Planet", value=1)
+
+        dumb = []
+        dumb2 = []
+
+        for save in [
+            "Full field of view",
+            "Zoomed filed of view",
+        ]:  # , "Aperture file"]:
+            box = ipw.HBox()
+            title = ipw.HTML(value=f"<b>{save} file name</b>")
+            label = ipw.Label(value="")
+            box.children = (title, label)
+            dumb.append(label)
+            dumb2.append(box)
+
+        # self._field_name, self._zoom_name, self._aper_name = dumb
+        self._field_name, self._zoom_name = dumb
+        self.save_files = ipw.Button(description="Save")
+        self._tess_save_box.children = (
+            [scope_name, planet_num] + dumb2 + [self.save_files]
+        )
+
+    def _update_tess_save_names(self):
+        if self.tess_submission is not None:
+            self._field_name.value = self.tess_submission.field_image
+            self._zoom_name.value = self.tess_submission.field_image_zoom
+            # self._aper_name.value = self.tess_submission.apertures
+        else:
+            self._field_name.value = ""
+            self._zoom_name.value = ""
+
+        def _settings_for_no_tess():
+            # Guess not, time to turn on the coordinates box
+            # self._turn_on_coordinates()
+            self.tess_submission = None
+            self.toi_info = None
+            self.targets_from_file = None
+            self._tess_object_info.layout.visibility = "hidden"
+            self.tess_save_toggle.value = False
+            self.tess_save_toggle.disabled = True
+            self.tess_save_toggle.layout.visibility = "hidden"
+
+        # Maybe this is a tess object?
+
+        if self.observatory is None or self.observatory.TESS_telescope_code is None:
+            _settings_for_no_tess()
+            return
+
+        try:
+            self.tess_submission = TessSubmission.from_header(
+                self._file_chooser.header,
+                telescope_code=self.observatory.TESS_telescope_code,
+                planet=1,
+            )
+        except ValueError:
+            # Not a TESS object, so turn off the TESS interface
+            _settings_for_no_tess()
+        else:
+            # This is a TESS object, so set up the TESS interface
+            self.tess_save_toggle.disabled = False
+            self.tess_save_toggle.layout.visibility = "visible"
+            self.toi_info = TOI(self.tess_submission.tic_id)
+
+            self._target_file_info = TessTargetFile(
+                self.toi_info.coord, self.toi_info.tess_mag, self.toi_info.depth
+            )
+
+            self.target_coord = self.tess_submission.tic_coord
+            self._tess_object_info.mag.value = self.toi_info.tess_mag
+            self._tess_object_info.depth.value = self.toi_info.depth
+            self._tess_object_info.layout.visibility = "visible"
+            self.targets_from_file = self._target_file_info.table
