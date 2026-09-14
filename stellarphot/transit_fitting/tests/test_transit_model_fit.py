@@ -77,28 +77,28 @@ def test_pytransit_matches_batman_reference():
         )
 
 
-def test_transit_model_fit_requires_pytransit(monkeypatch):
+def test_transit_model_fit_requires_pytransit(mocker):
     # If pytransit is not installed, constructing a TransitModelFit should fail
     # with a clear, actionable error rather than a cryptic one.
     from stellarphot.transit_fitting import core
 
-    monkeypatch.setattr(core, "RoadRunnerModel", None)
+    mocker.patch.object(core, "RoadRunnerModel", None)
     with pytest.raises(ImportError, match="install pytransit"):
         TransitModelFit()
 
 
-def test_transit_model_fit_requires_lmfit(monkeypatch):
+def test_transit_model_fit_requires_lmfit(mocker):
     # If lmfit is not installed, constructing a TransitModelFit should fail
     # with a clear, actionable error rather than a cryptic one. lmfit is
     # guarded with the same optional-import pattern as pytransit.
     from stellarphot.transit_fitting import core
 
-    monkeypatch.setattr(core, "lmfit", None)
+    mocker.patch.object(core, "lmfit", None)
     with pytest.raises(ImportError, match="lmfit"):
         TransitModelFit()
 
 
-def test_roadrunner_kwargs_follows_pytransit_version(monkeypatch):
+def test_roadrunner_kwargs_follows_pytransit_version(mocker):
     # pytransit >= 2.9.2 computes the limb-darkening weights exactly and warns
     # (fatally, under this test suite) if the deprecated ``klims`` is passed;
     # older releases need the widened ``klims`` to keep rp's upper bound off
@@ -107,10 +107,10 @@ def test_roadrunner_kwargs_follows_pytransit_version(monkeypatch):
     # whichever pytransit is installed.
     from stellarphot.transit_fitting import core
 
-    monkeypatch.setattr(core, "minversion", lambda *_: True)
+    mocker.patch.object(core, "minversion", return_value=True)
     assert core._roadrunner_kwargs() == {}
 
-    monkeypatch.setattr(core, "minversion", lambda *_: False)
+    mocker.patch.object(core, "minversion", return_value=False)
     assert core._roadrunner_kwargs() == {"klims": (0.005, 0.6)}
 
 
@@ -694,7 +694,7 @@ def test_compare_detrend_options_no_covariates():
     assert len(table) == 1
 
 
-def test_failed_fit_leaves_state_untouched(monkeypatch):
+def test_failed_fit_leaves_state_untouched(mocker):
     # A raising fit must not corrupt the instance: fit() runs on a copy of
     # self.params (via _run_fit), so a failure part-way through leaves
     # self.params and self.fit_result exactly as they were before the call.
@@ -702,10 +702,7 @@ def test_failed_fit_leaves_state_untouched(monkeypatch):
         noise_dev=1e-5, with_airmass=False, with_width=False, with_spp=False
     )
 
-    def _boom(*args, **kwargs):  # noqa: ARG001
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(tmod, "_run_fit", _boom)
+    mocker.patch.object(tmod, "_run_fit", side_effect=RuntimeError("boom"))
 
     fit_result_before = getattr(tmod, "fit_result", None)
     params_before = {
