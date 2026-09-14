@@ -3,6 +3,7 @@ import itertools
 import numpy as np
 from astropy import units as u
 from astropy.table import Table
+from astropy.utils import minversion
 from pydantic import BaseModel
 
 from ..utils.fit_diagnostics import excess_scatter, quoted_redchi
@@ -38,6 +39,30 @@ _LMFIT_INSTALL_MESSAGE = (
 )
 
 __all__ = ["TransitModelOptions", "TransitModelFit"]
+
+# pytransit 2.9.2 stopped precomputing a radius-ratio weight table (the limb
+# darkening weights are now computed exactly for each radius ratio) and
+# deprecated ``klims``: passing it raises a FutureWarning, and the workaround
+# in _roadrunner_kwargs is unnecessary there.
+_PYTRANSIT_EXACT_WEIGHTS_VERSION = "2.9.2"
+
+
+def _roadrunner_kwargs():
+    """
+    Keyword arguments for ``RoadRunnerModel`` that depend on the pytransit version.
+    """
+    if minversion("pytransit", _PYTRANSIT_EXACT_WEIGHTS_VERSION):
+        return {}
+
+    # Older pytransit precomputes a radius-ratio interpolation table bounded by
+    # ``klims``. Its upper end must stay strictly above ``rp``'s allowed
+    # maximum (0.5 in ``_default_params``): RoadRunner's native evaluator reads
+    # one element past the table when ``k`` lands exactly on the upper limit
+    # (an off-by-one in pytransit's boundary handling), which crashes with a
+    # segfault/access violation on some platforms and silently returns a flat
+    # light curve on others. Widening the upper limit keeps the whole fittable
+    # ``rp`` range safely inside the table.
+    return {"klims": (0.005, 0.6)}
 
 
 def _default_params():
@@ -179,16 +204,9 @@ class TransitModelFit:
         # pytransit's RoadRunnerModel with the quadratic limb-darkening law is
         # parameterized at evaluation time via ``evaluate(...)``, so no separate
         # parameter container is needed. The time array is supplied later via
-        # ``set_data`` (see the ``times`` setter).
-        #
-        # ``klims`` bounds the precomputed radius-ratio interpolation table.
-        # Its upper end must stay strictly above ``rp``'s allowed maximum (0.5
-        # in ``_default_params``): RoadRunner's native evaluator reads one
-        # element past the table when ``k`` lands exactly on the upper limit
-        # (an off-by-one in pytransit's boundary handling), which crashes with
-        # a segfault/access violation on some platforms. Widening the upper
-        # limit keeps the whole fittable ``rp`` range safely inside the table.
-        self._transit_model = RoadRunnerModel("quadratic", klims=(0.005, 0.6))
+        # ``set_data`` (see the ``times`` setter). The remaining keyword
+        # arguments depend on the pytransit version; see _roadrunner_kwargs.
+        self._transit_model = RoadRunnerModel("quadratic", **_roadrunner_kwargs())
         self._times = None
         self._airmass = None
         self._spp = None

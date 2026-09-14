@@ -165,6 +165,8 @@ Other Changes and Additions
 
 Bug Fixes
 ^^^^^^^^^
++ ``TransitModelFit`` no longer passes ``klims`` to pytransit 2.9.2 or newer,
+  where it is deprecated and no longer needed. [#716]
 + The three stellarphot sections of the JupyterLab launcher are now named
   ``Stellarphot 1 - setup``, ``Stellarphot 2 - photometry`` and
   ``Stellarphot 3 - analysis and tools``, so they appear in that order on

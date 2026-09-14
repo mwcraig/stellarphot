@@ -77,25 +77,41 @@ def test_pytransit_matches_batman_reference():
         )
 
 
-def test_transit_model_fit_requires_pytransit(monkeypatch):
+def test_transit_model_fit_requires_pytransit(mocker):
     # If pytransit is not installed, constructing a TransitModelFit should fail
     # with a clear, actionable error rather than a cryptic one.
     from stellarphot.transit_fitting import core
 
-    monkeypatch.setattr(core, "RoadRunnerModel", None)
+    mocker.patch.object(core, "RoadRunnerModel", None)
     with pytest.raises(ImportError, match="install pytransit"):
         TransitModelFit()
 
 
-def test_transit_model_fit_requires_lmfit(monkeypatch):
+def test_transit_model_fit_requires_lmfit(mocker):
     # If lmfit is not installed, constructing a TransitModelFit should fail
     # with a clear, actionable error rather than a cryptic one. lmfit is
     # guarded with the same optional-import pattern as pytransit.
     from stellarphot.transit_fitting import core
 
-    monkeypatch.setattr(core, "lmfit", None)
+    mocker.patch.object(core, "lmfit", None)
     with pytest.raises(ImportError, match="lmfit"):
         TransitModelFit()
+
+
+def test_roadrunner_kwargs_follows_pytransit_version(mocker):
+    # pytransit >= 2.9.2 computes the limb-darkening weights exactly and warns
+    # (fatally, under this test suite) if the deprecated ``klims`` is passed;
+    # older releases need the widened ``klims`` to keep rp's upper bound off
+    # the edge of their precomputed weight table. The helper is checked in
+    # both regimes by faking the version test, so this runs the same way
+    # whichever pytransit is installed.
+    from stellarphot.transit_fitting import core
+
+    mocker.patch.object(core, "minversion", return_value=True)
+    assert core._roadrunner_kwargs() == {}
+
+    mocker.patch.object(core, "minversion", return_value=False)
+    assert core._roadrunner_kwargs() == {"klims": (0.005, 0.6)}
 
 
 def test_model_light_curve_at_times_restores_original_times():
@@ -138,20 +154,22 @@ def test_model_light_curve_at_times_length_mismatch_raises():
 
 def test_model_light_curve_at_max_rp_bound_is_finite_and_not_flat():
     # Regression test for the klims=(0.005, 0.6) workaround in
-    # TransitModelFit.__init__ (see the comment there). rp's own allowed
-    # range tops out at 0.5 (_default_params), but RoadRunnerModel's default
-    # klims upper bound is also 0.5, and its native evaluator misbehaves
-    # when the radius ratio k lands exactly on the klims upper limit -- an
-    # off-by-one in pytransit's boundary handling that can crash outright,
-    # and that was observed (without the workaround, i.e. constructing
-    # RoadRunnerModel with its default klims) to instead silently return a
-    # flat, transit-free light curve here. Widening klims's upper bound
-    # keeps rp's whole allowed range safely inside the precomputed table.
+    # _roadrunner_kwargs (see the comment there). rp's own allowed range tops
+    # out at 0.5 (_default_params), but on pytransit < 2.9.2 RoadRunnerModel's
+    # default klims upper bound is also 0.5, and its native evaluator
+    # misbehaves when the radius ratio k lands exactly on the klims upper
+    # limit -- an off-by-one in pytransit's boundary handling that can crash
+    # outright, and that was observed (without the workaround, i.e.
+    # constructing RoadRunnerModel with its default klims) to instead silently
+    # return a flat, transit-free light curve here. Widening klims's upper
+    # bound keeps rp's whole allowed range safely inside the precomputed
+    # table. pytransit >= 2.9.2 has no table and needs no workaround.
     #
     # This evaluates the model at rp's maximum bound and checks for a sane
     # transit signature (finite values with a real dip) rather than a flat
-    # or non-finite light curve, so it fails if the klims workaround is
-    # removed or narrowed back to rp's bound.
+    # or non-finite light curve, so on old pytransit it fails if the klims
+    # workaround is removed or narrowed back to rp's bound, and on new
+    # pytransit it confirms the bound is handled natively.
     tmod = _make_transit_model_with_data(
         noise_dev=0, with_airmass=False, with_width=False, with_spp=False
     )
@@ -676,7 +694,7 @@ def test_compare_detrend_options_no_covariates():
     assert len(table) == 1
 
 
-def test_failed_fit_leaves_state_untouched(monkeypatch):
+def test_failed_fit_leaves_state_untouched(mocker):
     # A raising fit must not corrupt the instance: fit() runs on a copy of
     # self.params (via _run_fit), so a failure part-way through leaves
     # self.params and self.fit_result exactly as they were before the call.
@@ -684,10 +702,7 @@ def test_failed_fit_leaves_state_untouched(monkeypatch):
         noise_dev=1e-5, with_airmass=False, with_width=False, with_spp=False
     )
 
-    def _boom(*args, **kwargs):  # noqa: ARG001
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(tmod, "_run_fit", _boom)
+    mocker.patch.object(tmod, "_run_fit", side_effect=RuntimeError("boom"))
 
     fit_result_before = getattr(tmod, "fit_result", None)
     params_before = {
