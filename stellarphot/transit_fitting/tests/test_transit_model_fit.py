@@ -98,6 +98,22 @@ def test_transit_model_fit_requires_lmfit(monkeypatch):
         TransitModelFit()
 
 
+def test_roadrunner_kwargs_follows_pytransit_version(monkeypatch):
+    # pytransit >= 2.9.2 computes the limb-darkening weights exactly and warns
+    # (fatally, under this test suite) if the deprecated ``klims`` is passed;
+    # older releases need the widened ``klims`` to keep rp's upper bound off
+    # the edge of their precomputed weight table. The helper is checked in
+    # both regimes by faking the version test, so this runs the same way
+    # whichever pytransit is installed.
+    from stellarphot.transit_fitting import core
+
+    monkeypatch.setattr(core, "minversion", lambda *_: True)
+    assert core._roadrunner_kwargs() == {}
+
+    monkeypatch.setattr(core, "minversion", lambda *_: False)
+    assert core._roadrunner_kwargs() == {"klims": (0.005, 0.6)}
+
+
 def test_model_light_curve_at_times_restores_original_times():
     # Evaluating the model at a different set of times should not disturb the
     # model's configured times (the pytransit model is temporarily repointed
@@ -138,20 +154,22 @@ def test_model_light_curve_at_times_length_mismatch_raises():
 
 def test_model_light_curve_at_max_rp_bound_is_finite_and_not_flat():
     # Regression test for the klims=(0.005, 0.6) workaround in
-    # TransitModelFit.__init__ (see the comment there). rp's own allowed
-    # range tops out at 0.5 (_default_params), but RoadRunnerModel's default
-    # klims upper bound is also 0.5, and its native evaluator misbehaves
-    # when the radius ratio k lands exactly on the klims upper limit -- an
-    # off-by-one in pytransit's boundary handling that can crash outright,
-    # and that was observed (without the workaround, i.e. constructing
-    # RoadRunnerModel with its default klims) to instead silently return a
-    # flat, transit-free light curve here. Widening klims's upper bound
-    # keeps rp's whole allowed range safely inside the precomputed table.
+    # _roadrunner_kwargs (see the comment there). rp's own allowed range tops
+    # out at 0.5 (_default_params), but on pytransit < 2.9.2 RoadRunnerModel's
+    # default klims upper bound is also 0.5, and its native evaluator
+    # misbehaves when the radius ratio k lands exactly on the klims upper
+    # limit -- an off-by-one in pytransit's boundary handling that can crash
+    # outright, and that was observed (without the workaround, i.e.
+    # constructing RoadRunnerModel with its default klims) to instead silently
+    # return a flat, transit-free light curve here. Widening klims's upper
+    # bound keeps rp's whole allowed range safely inside the precomputed
+    # table. pytransit >= 2.9.2 has no table and needs no workaround.
     #
     # This evaluates the model at rp's maximum bound and checks for a sane
     # transit signature (finite values with a real dip) rather than a flat
-    # or non-finite light curve, so it fails if the klims workaround is
-    # removed or narrowed back to rp's bound.
+    # or non-finite light curve, so on old pytransit it fails if the klims
+    # workaround is removed or narrowed back to rp's bound, and on new
+    # pytransit it confirms the bound is handled natively.
     tmod = _make_transit_model_with_data(
         noise_dev=0, with_airmass=False, with_width=False, with_spp=False
     )

@@ -165,6 +165,11 @@ Other Changes and Additions
 
 Bug Fixes
 ^^^^^^^^^
++ ``TransitModelFit`` no longer passes the ``klims`` argument to pytransit
+  2.9.2 or newer, which deprecates it with a ``FutureWarning``; those
+  releases compute the limb-darkening weights exactly and need no
+  radius-ratio table workaround. Older pytransit still gets the widened
+  ``klims``. [#716]
 + The three stellarphot sections of the JupyterLab launcher are now named
   ``Stellarphot 1 - setup``, ``Stellarphot 2 - photometry`` and
   ``Stellarphot 3 - analysis and tools``, so they appear in that order on
