@@ -1,4 +1,4 @@
-import warnings
+from importlib import import_module
 
 import numpy as np
 import pytest
@@ -7,7 +7,6 @@ from astropy.nddata import CCDData
 from astropy.stats import gaussian_sigma_to_fwhm
 from astropy.table import QTable
 from astropy.utils.data import get_pkg_data_path
-from astropy.utils.exceptions import AstropyUserWarning
 
 from stellarphot import SourceListData
 from stellarphot.photometry import compute_fwhm, fast_fwhm_from_image, source_detection
@@ -39,36 +38,92 @@ def test_compute_fwhm(units):
     assert np.allclose(fwhm_x, expected_fwhm, rtol=1e-2)
 
 
-@pytest.mark.parametrize("mask_by_nan", [True, False])
-def test_compute_fwhm_with_missing_data(mask_by_nan):
-    # Regression test for https://github.com/feder-observatory/stellarphot/issues/161
-    # We should be able to find FWHM for a source even with NaNs in the image.
+def _image_with_bad_pixel(mask_by_nan):
+    """
+    Make a fake image in which the pixel at the center of the first source is
+    bad, either because it is NaN or because it is masked.
+
+    Parameters
+    ----------
+    mask_by_nan : bool
+        If ``True``, mark the bad pixel by setting it to NaN in a plain numpy
+        array. If ``False``, return a `~astropy.nddata.CCDData` whose mask is
+        `True` at that pixel.
+
+    Returns
+    -------
+    image : `numpy.ndarray` or `astropy.nddata.CCDData`
+        The image with one bad pixel.
+    sources : `astropy.table.Table`
+        The table of sources in the image.
+    bad_pixel : tuple of int
+        The ``(x, y)`` position of the bad pixel.
+    """
     fake_image = FakeImage(seed=SEED)
     sources = fake_image.sources
     x, y = sources["x_mean"].astype(int)[0], sources["y_mean"].astype(int)[0]
     image = fake_image.image.copy()
 
     if mask_by_nan:
-        # Add a NaN to the image at the location of the first source. Note the
-        # usual row/column swap when going to x/y coordinates.
+        # Note the usual row/column swap when going to x/y coordinates.
         image[y, x] = np.nan
     else:
         image = CCDData(image, unit=u.adu, mask=np.zeros_like(image, dtype=bool))
         image.mask[y, x] = True
 
-    # We expect a warning about NaNs in the image, so catch it
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=("Input data contains unmasked non-finite values "),
-            category=AstropyUserWarning,
-        )
-    fwhm_x, fwhm_y = compute_fwhm(
+    return image, sources, (x, y)
+
+
+def _expected_fwhm(sources):
+    return np.array(sources["x_stddev"] * gaussian_sigma_to_fwhm)
+
+
+@pytest.mark.parametrize("mask_by_nan", [True, False])
+def test_compute_fwhm_with_missing_data(mask_by_nan):
+    # Regression test for https://github.com/feder-observatory/stellarphot/issues/161
+    # We should be able to find FWHM for a source even with NaNs in the image.
+    image, sources, _ = _image_with_bad_pixel(mask_by_nan)
+
+    fwhm_x, _ = compute_fwhm(
         image, sources, x_column="x_mean", y_column="y_mean", fit_method=FwhmMethods.FIT
     )
 
-    expected_fwhm = np.array(sources["x_stddev"] * gaussian_sigma_to_fwhm)
-    assert np.allclose(fwhm_x, expected_fwhm, rtol=1e-2)
+    assert np.allclose(fwhm_x, _expected_fwhm(sources), rtol=1e-2)
+
+
+def test_compute_fwhm_does_not_zero_fill_nans(mocker):
+    # Regression test for https://github.com/feder-observatory/stellarphot/issues/641
+    # compute_fwhm used to replace NaN pixels with zero before calling
+    # photutils' fit_fwhm, as a workaround for photutils issue #2029. That was
+    # fixed in photutils 2.3, which is now the minimum version, so the NaNs
+    # should reach fit_fwhm untouched (masked, but not overwritten).
+    image, sources, (x, y) = _image_with_bad_pixel(mask_by_nan=True)
+
+    # The function under test uses fit_fwhm from its own module namespace, and
+    # that name is shadowed in the stellarphot.photometry namespace by the
+    # source_detection function, so get at the module explicitly.
+    detection_module = import_module("stellarphot.photometry.source_detection")
+    spy = mocker.spy(detection_module, "fit_fwhm")
+
+    fwhm_x, _ = compute_fwhm(
+        image, sources, x_column="x_mean", y_column="y_mean", fit_method=FwhmMethods.FIT
+    )
+
+    # The first source is the one whose central pixel is NaN.
+    first_call = spy.call_args_list[0]
+    data_passed = first_call.args[0]
+    x_cutout, y_cutout = first_call.kwargs["xypos"]
+
+    # The NaN made it to photutils, and it is still at the position of the star.
+    nan_positions = np.argwhere(np.isnan(data_passed))
+    assert len(nan_positions) == 1
+    nan_y, nan_x = nan_positions[0]
+    assert abs(nan_x - x_cutout) <= 1
+    assert abs(nan_y - y_cutout) <= 1
+
+    # The NaN is masked in the call, and the FWHM is still measured correctly.
+    assert first_call.kwargs["mask"][nan_y, nan_x]
+    assert np.allclose(fwhm_x, _expected_fwhm(sources), rtol=1e-2)
 
 
 @pytest.mark.parametrize("image_is_ccd", [True, False])

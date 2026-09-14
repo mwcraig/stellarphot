@@ -30,7 +30,9 @@ dependencies = [
                       # introduced Parameters.create_uvars()
     "matplotlib",
     "pandas",
-    "photutils >=2,<3",
+    "photutils >=2.3,<3",  # 2.3 is the first release in which fit_fwhm
+                           # handles NaN in the data it is given; see
+                           # https://github.com/astropy/photutils/issues/2029
     "pydantic >=2",
     "pyyaml",
     "platformdirs",
