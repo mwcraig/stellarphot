@@ -165,11 +165,7 @@ Other Changes and Additions
 
 Bug Fixes
 ^^^^^^^^^
-+ ``compute_fwhm()`` no longer replaces NaN pixels with zero before fitting a
-  source, so a star with a bad pixel near it is now fit from the pixels that
-  are good instead of from a fake zero. That workaround was for a photutils
-  bug fixed in photutils 2.3, which is now the oldest photutils stellarphot
-  supports. [#641]
++ ``compute_fwhm()`` no longer replaces NaN pixels with zero before fitting. [#641]
 + ``TransitModelFit`` no longer passes ``klims`` to pytransit 2.9.2 or newer,
   where it is deprecated and no longer needed. [#716]
 + The three stellarphot sections of the JupyterLab launcher are now named
